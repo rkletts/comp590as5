@@ -1,83 +1,64 @@
-defmodule BarberShop do
+defmodule SleepingBarber do
   def start do
-    spawn(__MODULE__, :receptionist_loop, [[]])
+    barber = spawn_link(__MODULE__, :barber_loop, [])
+    waiting_room = spawn_link(__MODULE__, :waiting_room_loop, [[], 6, barber])
+    receptionist = spawn_link(__MODULE__, :receptionist_loop, [waiting_room])
+    spawn(__MODULE__, :customer_generator, [receptionist])
+  end
+
+  def barber_loop do
+    receive do
+      {:next_customer, customer} ->
+        IO.puts("Barber is cutting hair...")
+        :timer.sleep(:rand.uniform(3000))
+        IO.puts("Barber finished haircut.")
+        send(customer, :done)
+        barber_loop()
+      :no_customers ->
+        IO.puts("Barber is taking a short break.")
+        :timer.sleep(:rand.uniform(2000))
+        barber_loop()
+    end
+  end
+
+  def waiting_room_loop(queue, max_size, barber) do
+    receive do
+      {:new_customer, customer} when length(queue) < max_size ->
+        IO.puts("Customer takes a seat in the waiting room.")
+        new_queue = queue ++ [customer]
+        send(barber, {:next_customer, hd(new_queue)})
+        waiting_room_loop(tl(new_queue), max_size, barber)
+      {:new_customer, _customer} ->
+        IO.puts("Waiting room is full. Customer leaves.")
+        waiting_room_loop(queue, max_size, barber)
+      {:barber_done} ->
+        if queue == [] do
+          send(barber, :no_customers)
+        else
+          send(barber, {:next_customer, hd(queue)})
+        end
+        waiting_room_loop(tl(queue), max_size, barber)
+    end
   end
 
   def receptionist_loop(waiting_room) do
     receive do
-      {:new_customer, customer_pid} ->
-        if length(waiting_room) < 6 do
-          IO.puts("Receptionist greets a new customer.")
-          send(customer_pid, :sit)
-          receptionist_loop(waiting_room ++ [customer_pid])
-        else
-          IO.puts("Receptionist turns away a customer; waiting room is full.")
-          send(customer_pid, :leave)
-          receptionist_loop(waiting_room)
-        end
-
-      {:barber_ready, barber_pid} ->
-        case waiting_room do
-          [next_customer | rest] ->
-            send(barber_pid, {:next_customer, next_customer})
-            receptionist_loop(rest)
-          [] ->
-            send(barber_pid, :no_customers)
-            receptionist_loop([])
-        end
+      {:new_customer, customer} ->
+        IO.puts("Receptionist greets a new customer.")
+        send(waiting_room, {:new_customer, customer})
+        receptionist_loop(waiting_room)
     end
   end
 
-  def customer_generator do
-    spawn(fn -> loop_customer_generator() end)
-  end
-
-  defp loop_customer_generator do
-    Process.sleep(:rand.uniform(2000))
-    customer_pid = spawn(__MODULE__, :customer_loop, [])
-    send(Process.whereis(:receptionist), {:new_customer, customer_pid})
-    loop_customer_generator()
-  end
-
-  def customer_loop do
-    receive do
-      :sit ->
-        IO.puts("Customer takes a seat in the waiting room.")
-        receive do
-          :get_haircut ->
-            IO.puts("Customer is getting a haircut.")
-            receive do
-              :done ->
-                IO.puts("Customer leaves after haircut.")
-            end
-        end
-      :leave ->
-        IO.puts("Customer leaves because the shop is full.")
-    end
-  end
-
-  def barber do
-    spawn(fn -> barber_loop() end)
-  end
-
-  defp barber_loop do
-    send(Process.whereis(:receptionist), {:barber_ready, self()})
-    receive do
-      {:next_customer, customer_pid} ->
-        IO.puts("Barber is cutting hair...")
-        Process.sleep(:rand.uniform(3000))
-        IO.puts("Barber finished haircut.")
-        send(customer_pid, :done)
-        barber_loop()
-      :no_customers ->
-        IO.puts("Barber is taking a short break.")
-        Process.sleep(:rand.uniform(5000))
-        barber_loop()
-    end
+  def customer_generator(receptionist) do
+    spawn(fn ->
+      customer = self()
+      send(receptionist, {:new_customer, customer})
+      receive do
+        :done -> IO.puts("Customer leaves after haircut.")
+      end
+    end)
+    :timer.sleep(:rand.uniform(2000))
+    customer_generator(receptionist)
   end
 end
-
-# Start the simulation
-Process.register(BarberShop.start(), :receptionist)
-BarberShop.barber()
-BarberShop.customer_generator()
