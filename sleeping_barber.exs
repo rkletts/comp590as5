@@ -1,107 +1,95 @@
 defmodule BarberShop do
-  def start do
-    IO.puts("Barber shop is opening!")
-
-    barber = spawn_link(__MODULE__, :barber_loop, [self(), 1])  # Barber process
-    waiting_room = spawn_link(__MODULE__, :waiting_room_loop, [[]])  # Waiting room process
-    receptionist = spawn_link(__MODULE__, :receptionist_loop, [waiting_room, barber])  # Receptionist process
-
-    spawn(__MODULE__, :customer_generator, [receptionist])
-
-    # Keep the main process alive
+  def start(chairs) do
+    shop = self()
+    barber = spawn_link(fn -> barber_loop(shop, chairs) end)
+    waiting_room = spawn_link(fn -> waiting_room_loop([], chairs, barber) end)
+    receptionist = spawn_link(fn -> receptionist_loop(waiting_room, barber) end)
+    spawn_link(fn -> customer_generator(receptionist) end)
     loop_forever()
   end
 
-  def barber_loop(shop, chairs) do
+  defp barber_loop(shop, chairs, behavior \\ &default_haircut/1) do
     receive do
       {:cut_hair, customer} ->
-        IO.puts("Barber is cutting hair...")
-        :timer.sleep(:rand.uniform(3000))  # Simulate cutting time
-        IO.puts("Barber finished haircut.")
-        send(customer, :haircut_done)
-        send(shop, :barber_ready)  # Tell the shop that the barber is ready
-        barber_loop(shop, chairs)
-
+        behavior.(customer)
+        send(shop, :barber_ready)
+        barber_loop(shop, chairs, behavior)
+      
       {:update_barber_behavior, new_function} ->
         IO.puts("Updating barber behavior...")
-        barber_loop(new_function, chairs)
-
-      {:take_break} ->
-        IO.puts("Barber is taking a break...")
-        :timer.sleep(5000)  # Simulate break time
-        IO.puts("Barber is back to work.")
-        barber_loop(shop, chairs)
-
-      {:add_chair} ->
-        IO.puts("Barber shop is adding another chair!")
-        barber_loop(shop, chairs + 1)
-    end
-  end
-
-  def waiting_room_loop(queue) do
-    receive do
-      {:enter, customer, _receptionist} when length(queue) < 6 ->
-        IO.puts("Customer enters waiting room.")
-        waiting_room_loop(queue ++ [customer])
-
-      {:enter, _, _} ->
-        IO.puts("Waiting room full. Customer leaves.")
-        waiting_room_loop(queue)
-
-      {:next_customer, barber} ->
-        case queue do
-          [next | rest] ->
-            IO.puts("Customer goes to barber chair.")
-            send(barber, {:cut_hair, next})
-            waiting_room_loop(rest)
-          [] ->
-            waiting_room_loop(queue)
+        barber_loop(shop, chairs, new_function)
+      
+      :barber_idle ->
+        IO.puts("Barber is sleeping, waiting for customers...")
+        receive do
+          {:cut_hair, customer} ->
+            IO.puts("Barber wakes up to cut hair...")
+            behavior.(customer)
+            send(shop, :barber_ready)
+            barber_loop(shop, chairs, behavior)
         end
     end
   end
 
-  def receptionist_loop(waiting_room, barber) do
+  defp default_haircut(customer) do
+    IO.puts("Barber is cutting hair...")
+    :timer.sleep(:rand.uniform(3000))
+    IO.puts("Barber finished haircut.")
+    send(customer, :haircut_done)
+  end
+
+  defp waiting_room_loop(queue, chairs, barber) do
+    receive do
+      {:enter, customer, receptionist} ->
+        if length(queue) < chairs do
+          IO.puts("Customer takes a seat in the waiting room.")
+          send(receptionist, :seated)
+          waiting_room_loop(queue ++ [customer], chairs, barber)
+        else
+          IO.puts("Waiting room full. Customer leaves.")
+          send(receptionist, :full)
+          waiting_room_loop(queue, chairs, barber)
+        end
+      
+      {:next_customer, barber} when queue != [] ->
+        [next | rest] = queue
+        send(barber, {:cut_hair, next})
+        waiting_room_loop(rest, chairs, barber)
+      
+      {:next_customer, _barber} ->
+        send(barber, :barber_idle)
+        waiting_room_loop(queue, chairs, barber)
+    end
+  end
+
+  defp receptionist_loop(waiting_room, barber) do
     receive do
       {:new_customer, customer} ->
         IO.puts("Receptionist greets a new customer.")
         send(waiting_room, {:enter, customer, self()})
-        send(waiting_room, {:next_customer, barber})  # **This line ensures customers get to the barber**
-
+        send(waiting_room, {:next_customer, barber})
+      
       :barber_ready ->
         send(waiting_room, {:next_customer, barber})
+      
+      :no_customers ->
+        send(barber, :barber_idle)
     end
-
     receptionist_loop(waiting_room, barber)
   end
 
-  def customer_generator(receptionist) do
-    IO.puts("Generating a new customer...")
+  defp customer_generator(receptionist) do
     :timer.sleep(:rand.uniform(2000))
-
-    customer = spawn(__MODULE__, :customer_loop, [])
-    IO.puts("New customer arrived!")
-
+    customer = spawn(fn -> customer_loop() end)
     send(receptionist, {:new_customer, customer})
     customer_generator(receptionist)
   end
 
-  def customer_loop do
+  defp customer_loop do
     receive do
       :haircut_done ->
-        IO.puts("Customer got a haircut and leaves.")
+        IO.puts("Customer leaves after haircut.")
     end
-  end
-
-  def update_barber(new_function) do
-    send(self(), {:update_barber_behavior, new_function})
-  end
-
-  def take_barber_break do
-    send(self(), {:take_break})
-  end
-
-  def add_barber_chair do
-    send(self(), {:add_chair})
   end
 
   defp loop_forever do
