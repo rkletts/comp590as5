@@ -10,7 +10,7 @@ defmodule Customer do
 
   defp await_response(id) do
     receive do
-      {:wait, waiting_room, barber} ->
+      {:wait, _waiting_room, barber} ->
         wait_for_haircut(barber, id)
       :shop_full ->
         IO.puts("Customer #{id} leaves - shop full")
@@ -18,7 +18,7 @@ defmodule Customer do
     end
   end
 
-  defp wait_for_haircut(barber, id) do
+  defp wait_for_haircut(_barber, id) do
     receive do
       :haircut_done ->
         IO.puts("Customer #{id} got haircut and leaves happy")
