@@ -32,10 +32,10 @@ defmodule Customer do
   defp await_response(id) do
     receive do
       {:wait, _waiting_room, barber} ->
-        Code.ensure_loaded(CustomerBehavior)  # Ensure behavior is loaded
-        CustomerBehavior.wait_for_haircut(barber, id)  # Use the behavior module
+        Code.ensure_loaded(CustomerBehavior)
+        CustomerBehavior.wait_for_haircut(barber, id)
       :shop_full ->
-        IO.puts("Customer #{id} leaves - shop full")
+        IO.puts("Customer #{id} leaves - shop is full")
         exit(:normal)
     end
   end
