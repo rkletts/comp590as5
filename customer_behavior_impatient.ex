@@ -1,6 +1,6 @@
 defmodule CustomerBehavior do
   def wait_for_haircut(barber, id) do
-    wait_time_limit = :rand.uniform(5000) + 5000 # Max 10s of wait
+    wait_time_limit = :rand.uniform(5000) + 5000
 
 
     receive do
