@@ -1,24 +1,13 @@
-defmodule Customer do
-  def new(receptionist, id) do
-    spawn_link(fn -> init(receptionist, id) end)
+defmodule BarberBehavior do
+  def cut_hair do
+    time = :rand.uniform(4000) + 2000
+    IO.puts("Cutting hair for #{time}ms")
+    Process.sleep(time)
   end
+end
 
-  def init(receptionist, id) do
-    Receptionist.greet(receptionist, self(), id)
-    await_response(id)
-  end
-
-  defp await_response(id) do
-    receive do
-      {:wait, _waiting_room, barber} ->
-        wait_for_haircut(barber, id)
-      :shop_full ->
-        IO.puts("Customer #{id} leaves - shop full")
-        exit(:normal)
-    end
-  end
-
-  defp wait_for_haircut(_barber, id) do
+defmodule CustomerBehavior do
+  def wait_for_haircut(barber, id) do
     receive do
       :haircut_done ->
         IO.puts("Customer #{id} got haircut and leaves happy")
@@ -27,45 +16,75 @@ defmodule Customer do
   end
 end
 
+
+defmodule Customer do
+  def new(receptionist, id) do
+    spawn_link(fn -> init(receptionist, id) end)
+  end
+
+
+  def init(receptionist, id) do
+    Receptionist.greet(receptionist, self(), id)
+    await_response(id)
+  end
+
+
+  defp await_response(id) do
+    receive do
+      {:wait, _waiting_room, barber} ->
+        Code.ensure_loaded(CustomerBehavior)  # Ensure behavior is loaded
+        CustomerBehavior.wait_for_haircut(barber, id)  # Use the behavior module
+      :shop_full ->
+        IO.puts("Customer #{id} leaves - shop full")
+        exit(:normal)
+    end
+  end
+end
+
+
 defmodule Barber do
   use GenServer
 
-  # Hot-swappable behavior module
-  defmodule Behavior do
-    def cut_hair do
-      time = :rand.uniform(4000) + 2000
-      IO.puts("Cutting hair for #{time}ms")
-      Process.sleep(time)
-    end
-  end
 
   def start_link do
     GenServer.start_link(__MODULE__, :sleeping)
   end
 
-  # Client API
+
   def cut_hair(barber, customer, id) do
-    GenServer.call(barber, {:cut_hair, customer, id}, 10_000)
+    try do
+      GenServer.call(barber, {:cut_hair, customer, id}, :infinity)
+    catch
+      :exit, _ ->
+        IO.puts("Retrying haircut for Customer #{id}")
+        Process.sleep(1000)
+        cut_hair(barber, customer, id)
+    end
   end
 
-  # Server callbacks
+
   def init(:sleeping) do
     IO.puts("Barber is sleeping")
     {:ok, :sleeping}
   end
 
+
   def handle_call({:cut_hair, customer, id}, _from, state) do
-    # Load latest behavior module
-    :code.purge(Behavior)
-    :code.load_file(Behavior)
-    
+    Code.ensure_loaded(BarberBehavior)
+   
     IO.puts("Barber cutting hair for Customer #{id}")
-    Behavior.cut_hair()
-    send(customer, :haircut_done)
-    
-    {:reply, :ok, state}
+    try do
+      BarberBehavior.cut_hair()
+      send(customer, :haircut_done)
+      {:reply, :ok, state}
+    catch
+      kind, reason ->
+        IO.puts("Error during haircut: #{inspect(kind)} #{inspect(reason)}")
+        {:reply, :error, state}
+    end
   end
 end
+
 
 defmodule WaitingRoom do
   use GenServer
@@ -74,7 +93,6 @@ defmodule WaitingRoom do
     GenServer.start_link(__MODULE__, {capacity, :queue.new(), nil})
   end
 
-  # Client API
   def enter(room, customer, id) do
     GenServer.call(room, {:enter, customer, id})
   end
@@ -91,7 +109,6 @@ defmodule WaitingRoom do
     GenServer.cast(room, :service_complete)
   end
 
-  # Server callbacks
   def init({capacity, queue, current}) do
     IO.puts("Waiting room started with #{capacity} chairs")
     {:ok, {capacity, queue, current}}
@@ -99,7 +116,7 @@ defmodule WaitingRoom do
 
   def handle_call({:enter, customer, id}, _from, {capacity, queue, current}) do
     waiting_count = :queue.len(queue)
-    
+
     if waiting_count < capacity do
       IO.puts("Customer #{id} enters waiting room (#{waiting_count + 1}/#{capacity} seats taken)")
       {:reply, :ok, {capacity, :queue.in({customer, id}, queue), current}}
@@ -134,12 +151,10 @@ defmodule Receptionist do
     GenServer.start_link(__MODULE__, {waiting_room, barber})
   end
 
-  # Client API
   def greet(receptionist, customer, id) do
     GenServer.cast(receptionist, {:greet, customer, id})
   end
 
-  # Server callbacks
   def init({waiting_room, barber}) do
     IO.puts("Receptionist started")
     {:ok, {waiting_room, barber}}
@@ -147,94 +162,67 @@ defmodule Receptionist do
 
   def handle_cast({:greet, customer, id}, {waiting_room, barber} = state) do
     IO.puts("Receptionist greeting Customer #{id}")
+
     case WaitingRoom.enter(waiting_room, customer, id) do
       :ok ->
         send(customer, {:wait, waiting_room, barber})
       :full ->
         send(customer, :shop_full)
     end
+
     {:noreply, state}
   end
 end
 
 defmodule BarberShop do
   def start do
-    Process.flag(:trap_exit, true)  # Trap exits to prevent crashes
-    
-    # Start all the processes
-    {:ok, waiting_room} = WaitingRoom.start_link(6)  # 6 chairs
+    Process.flag(:trap_exit, true)
+
+    {:ok, waiting_room} = WaitingRoom.start_link(6)
     {:ok, barber} = Barber.start_link()
     {:ok, receptionist} = Receptionist.start_link(waiting_room, barber)
-    
-    # Start customer generator and service loop with restart capability
+
     spawn_monitor(fn -> generate_customers(receptionist, 1) end)
     spawn_monitor(fn -> service_loop(waiting_room, barber) end)
-    
-    # Monitor the processes
-    monitor_processes(waiting_room, barber, receptionist)
   end
 
   defp generate_customers(receptionist, customer_id) do
-    try do
-      Process.sleep(:rand.uniform(5000))
-      :code.purge(Customer)
-      :code.load_file(Customer)
-      Customer.new(receptionist, customer_id)
-      generate_customers(receptionist, customer_id + 1)
-    rescue
-      _ -> 
-        IO.puts("Customer generator recovering...")
-        generate_customers(receptionist, customer_id)
-    catch
-      _ ->
-        IO.puts("Customer generator recovering from catch...")
-        generate_customers(receptionist, customer_id)
-    end
+    Process.sleep(:rand.uniform(5000))
+
+    Code.ensure_loaded(Customer)
+    Customer.new(receptionist, customer_id)
+
+    generate_customers(receptionist, customer_id + 1)
   end
 
-  defp service_loop(waiting_room, barber) do
-    try do
-      case WaitingRoom.next_customer(waiting_room) do
-        {:ok, customer, id} ->
-          try do
-            WaitingRoom.customer_in_service(waiting_room, id)
-            Barber.cut_hair(barber, customer, id)
-            WaitingRoom.service_complete(waiting_room)
-          catch
-            :exit, {:timeout, _} ->
-              IO.puts("Haircut timeout for Customer #{id}, continuing...")
-              WaitingRoom.service_complete(waiting_room)
-          end
-        :empty ->
-          Process.sleep(1000)  # Sleep if no customers
-      end
-      service_loop(waiting_room, barber)
-    rescue
-      _ -> 
-        IO.puts("Service loop recovering...")
+   defp service_loop(waiting_room, barber) do
+    case WaitingRoom.next_customer(waiting_room) do
+      {:ok, customer, id} ->
+        WaitingRoom.customer_in_service(waiting_room, id)
+        try do
+          Barber.cut_hair(barber, customer, id)
+          WaitingRoom.service_complete(waiting_room)
+        catch
+          kind, reason ->
+            IO.puts("Error in service loop: #{inspect(kind)} #{inspect(reason)}")
+        end
+      :empty ->
+        IO.puts("No customers, barber is sleeping...")
         Process.sleep(1000)
-        service_loop(waiting_room, barber)
-    catch
-      _ ->
-        IO.puts("Service loop recovering from catch...")
-        Process.sleep(1000)
-        service_loop(waiting_room, barber)
     end
+
+
+    service_loop(waiting_room, barber)
   end
 
-  defp monitor_processes(waiting_room, barber, receptionist) do
-    receive do
-      {:DOWN, _, :process, _pid, _reason} ->
-        IO.puts("A process died, restarting the system...")
-        start()
-      _ ->
-        monitor_processes(waiting_room, barber, receptionist)
-    end
+
+
+  def keep_alive do
+    Process.sleep(1000)
+    keep_alive()
   end
 end
 
-# Start the barber shop
-BarberShop.start()
-
-# Keep the script running forever
-Process.sleep(:infinity)
+# Start the barbershop without blocking IEx
+spawn(fn -> BarberShop.start() end)
+spawn(fn -> BarberShop.keep_alive() end)
