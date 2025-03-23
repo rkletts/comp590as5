@@ -24,17 +24,13 @@ For this project, we implemented a simulation of the barbershop problem using El
 
 5. Exit Conditions: Once a customer receives a haircut or leaves due to impatience, they call exit(:normal), which stops their process. This keeps the system from accumulating unnecessary processes over time.
 
-### Challenges and Adjustments
-
-One challenge was making sure the message passing worked correctly. We had to include the after timeout for the impatient customer, because at first they would just wait forever even if the barber was slow. Another challenge was testing different timing combinations to make sure both customer types behaved as expected.
-
 ### Overall Design
 
 The overall design is simple but effective. By separating customer and barber behaviors into different modules, we were able to modify, run, and test different scenarios. The use of Elixir’s message-passing concurrency made it easy to simulate real waiting and processing times. 
 
+### To Test Hotswap for Customers:
+After starting the program in iex with c("sleeping_barber.exs"), do c("customer_behavior_impatient.ex"). To revert back to original behavior, do c("customer_behavior_original.ex")
+
 ### To Test Hotswap for Barber:
 After starting the program in iex with c("sleeping_barber.exs"), do c("barber_behavior_slow.ex"). To revert back to original behavior, do c("barber_behavior_original.ex")
 
-
-### To Test Hotswap for Customers:
-After starting the program in iex with c("sleeping_barber.exs"), do c("customer_behavior_impatient.ex"). To revert back to original behavior, do c("customer_behavior_original.ex")
