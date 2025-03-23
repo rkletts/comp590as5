@@ -18,7 +18,7 @@ For this project, we implemented a simulation of the barbershop problem using El
 
 3. Barber Variants: The barber also has two versions:
    - barber_behavior_original.ex cuts hair for a random time between 2 to 6 seconds.
-   - barber_behavior_slow.ex takes a fixed 15 seconds per haircut to simulate a slower barber, which can cause impatient customers to leave.
+   - barber_behavior_slow.ex takes a fixed 15 seconds per haircut to simulate a slower barber. This usually causes the waiting room to become full quicker and more customers getting turned away as a result.
 
 4. Randomness for Realism: We used random wait times for both customers and barbers to make the simulation feel more natural. The impatient customer’s tolerance is randomly set between 5 to 10 seconds, and the barber’s haircut time varies in the original version.
 
@@ -30,7 +30,7 @@ One challenge was making sure the message passing worked correctly. We had to in
 
 ### Overall Design
 
-The overall design is simple but effective. By separating customer and barber behaviors into different modules, we were able to modify and test different scenarios. The use of Elixir’s message-passing concurrency made it easy to simulate real waiting and processing times. 
+The overall design is simple but effective. By separating customer and barber behaviors into different modules, we were able to modify, run, and test different scenarios. The use of Elixir’s message-passing concurrency made it easy to simulate real waiting and processing times. 
 
 ### To Test Hotswap for Barber:
 After starting the program in iex with c("sleeping_barber.exs"), do c("barber_behavior_slow.ex"). To revert back to original behavior, do c("barber_behavior_original.ex")
